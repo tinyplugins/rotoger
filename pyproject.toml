@@ -6,12 +6,12 @@ readme = "README.md"
 authors = [
     { name = "grillazz", email = "jakub.miazek.py@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "attrs>=25.3.0",
-    "orjson>=3.11.1",
-    "structlog>=25.4.0",
-    "whenever>=0.8.8",
+    "orjson>=3.11.4",
+    "structlog>=25.5.0",
+    "whenever>=0.9.3",
 ]
 
 [project.scripts]
