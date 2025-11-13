@@ -2,112 +2,71 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from threading import Lock
 
 import orjson
 import structlog
-from attrs import define, field
 from whenever._whenever import Instant
 
 
-class SingletonMetaNoArgs(type):
-    _instances = {}
+def _configure_logger() -> structlog.BoundLogger:
+    """
+    Configures and returns a structlog logger with a rotating file handler.
 
-    _lock: Lock = Lock()
+    The logger is configured using environment variables for path, file size,
+    and backup count. It formats logs as JSON.
+    """
+    log_dir = Path(os.environ.get("ROTOGER_LOG_PATH", "."))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_date = Instant.now().py_datetime().strftime("%Y%m%d")
+    log_path = log_dir / f"{log_date}_{os.getpid()}.log"
 
-    def __call__(cls):
-        with cls._lock:
-            if cls not in cls._instances:
-                instance = super().__call__()
-                cls._instances[cls] = instance
-        return cls._instances[cls]
+    # Use int() to ensure env var values are correctly typed
+    max_bytes = int(os.environ.get("ROTOGER_LOG_MAX_BYTES", 10 * 1024 * 1024))
+    backup_count = int(os.environ.get("ROTOGER_LOG_BACKUP_COUNT", 5))
 
+    handler = RotatingFileHandler(
+        filename=log_path,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
 
-class RotatingBytesLogger:
-    """Logger that respects RotatingFileHandler's rotation capabilities."""
+    # Use structlog's standard library integration
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
 
-    def __init__(self, handler):
-        self.handler = handler
+    # Configure the underlying standard logger
+    formatter = structlog.stdlib.ProcessorFormatter(
+        # These run after the processors defined in structlog.configure
+        processor=structlog.processors.JSONRenderer(
+            serializer=lambda *args, **kwargs: orjson.dumps(*args, **kwargs).decode()
+        ),
+    )
+    handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
 
-    def msg(self, message):
-        """Process a message and pass it through the handler's emit method."""
-        if isinstance(message, bytes):
-            message = message.decode("utf-8")
-
-        # Create a log record that will trigger rotation checks
-        record = logging.LogRecord(
-            name="structlog",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg=message.rstrip("\n"),
-            args=(),
-            exc_info=None
-        )
-
-        # Check if rotation is needed before emitting
-        if self.handler.shouldRollover(record):
-            self.handler.doRollover()
-
-        # Emit the record through the handler
-        self.handler.emit(record)
-
-    # Required methods to make it compatible with structlog
-    def debug(self, message):
-        self.msg(message)
-
-    def info(self, message):
-        self.msg(message)
-
-    def warning(self, message):
-        self.msg(message)
-
-    def error(self, message):
-        self.msg(message)
-
-    def critical(self, message):
-        self.msg(message)
+    return structlog.get_logger()
 
 
-class RotatingBytesLoggerFactory:
-    """Factory that creates loggers that respect file rotation."""
-
-    def __init__(self, handler):
-        self.handler = handler
-
-    def __call__(self, *args, **kwargs):
-        return RotatingBytesLogger(self.handler)
+# Module-level singleton instance
+_logger_instance = _configure_logger()
 
 
-@define
-class Rotoger(metaclass=SingletonMetaNoArgs):
-    _logger: structlog.BoundLogger = field(init=False)
-
-    def __attrs_post_init__(self):
-        _log_dir = Path(os.environ.get("ROTOGER_LOG_PATH", "."))
-        _log_dir.mkdir(parents=True, exist_ok=True)
-        _log_date = Instant.now().py_datetime().strftime("%Y%m%d")
-        _log_path = _log_dir / f"{_log_date}_{os.getpid()}.log"
-        _handler = RotatingFileHandler(
-            filename=_log_path,
-            maxBytes=os.environ.get("ROTOGER_LOG_MAX_BYTES", 10 * 1024 * 1024),
-            backupCount=os.environ.get("ROTOGER_LOG_BACKUP_COUNT", 5),
-            encoding="utf-8"
-        )
-        structlog.configure(
-            cache_logger_on_first_use=True,
-            wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-            processors=[
-                structlog.contextvars.merge_contextvars,
-                structlog.processors.add_log_level,
-                structlog.processors.format_exc_info,
-                structlog.processors.TimeStamper(fmt="iso", utc=True),
-                structlog.processors.JSONRenderer(serializer=orjson.dumps),
-            ],
-            logger_factory=RotatingBytesLoggerFactory(_handler)
-        )
-        self._logger = structlog.get_logger()
-
-    def get_logger(self) -> structlog.BoundLogger:
-        return self._logger
-
+def get_logger() -> structlog.BoundLogger:
+    """
+    Returns the configured singleton logger instance.
+    """
+    return _logger_instance
