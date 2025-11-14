@@ -84,12 +84,14 @@ class Rotoger(metaclass=SingletonMetaNoArgs):
     _logger: structlog.BoundLogger = field(init=False)
 
     def __attrs_post_init__(self):
+        _log_dir = Path(os.environ.get("ROTOGER_LOG_PATH", "."))
+        _log_dir.mkdir(parents=True, exist_ok=True)
         _log_date = Instant.now().py_datetime().strftime("%Y%m%d")
-        _log_path = Path(f"{_log_date}_{os.getpid()}.log")
+        _log_path = _log_dir / f"{_log_date}_{os.getpid()}.log"
         _handler = RotatingFileHandler(
             filename=_log_path,
-            maxBytes=1000,
-            backupCount=5,
+            maxBytes=os.environ.get("ROTOGER_LOG_MAX_BYTES", 10 * 1024 * 1024),
+            backupCount=os.environ.get("ROTOGER_LOG_BACKUP_COUNT", 5),
             encoding="utf-8"
         )
         structlog.configure(
