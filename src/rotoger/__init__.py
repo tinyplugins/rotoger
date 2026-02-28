@@ -40,6 +40,7 @@ def _configure_logger() -> structlog.BoundLogger:
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.format_exc_info,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+            # structlog.stdlib.add_logger_name,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
@@ -49,16 +50,40 @@ def _configure_logger() -> structlog.BoundLogger:
     # Configure the underlying standard logger
     formatter = structlog.stdlib.ProcessorFormatter(
         # These run after the processors defined in structlog.configure
+        foreign_pre_chain=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.add_logger_name,
+        ],
         processor=structlog.processors.JSONRenderer(
             serializer=lambda *args, **kwargs: orjson.dumps(*args, **kwargs).decode()
         ),
     )
     handler.setFormatter(formatter)
-    root_logger = logging.getLogger()
+
+
+    root_logger = logging.getLogger("root")  # Get the root logger
     root_logger.addHandler(handler)
+    root_logger.propagate = False  # Prevent logs from being propagated to the root logger
     root_logger.setLevel(logging.INFO)
 
+    uvicorn_logger = logging.getLogger("uvicorn")  # Get the root logger
+    uvicorn_logger.addHandler(handler)
+    uvicorn_logger.propagate = False  # Prevent logs from being propagated to the root logger
+    uvicorn_logger.setLevel(logging.INFO)
+
+    sa_logger = logging.getLogger("sqlalchemy")  # Get the root logger
+    sa_logger.addHandler(handler)
+    sa_logger.propagate = False  # Prevent logs from being propagated to the root logger
+    sa_logger.setLevel(logging.WARNING)
+
+    # Set SQLAlchemy engine logger level specifically if needed
+    # logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
     return structlog.get_logger()
+
 
 
 # Module-level singleton instance
